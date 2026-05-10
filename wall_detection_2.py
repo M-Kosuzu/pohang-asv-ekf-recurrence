@@ -13,6 +13,7 @@ import json
 from scipy.spatial.transform import Rotation
 from skimage.transform import hough_line, hough_line_peaks
 import pandas as pd
+from skimage.morphology import dilation
 
 """
 ***************************
@@ -95,8 +96,8 @@ def filter_by_range(points,min_x,max_x,min_y,max_y):
     range_filter = (x >= min_x) & (x <= max_x) & (y >= min_y) & (y <= max_y)
     return points[range_filter]
 
-# 加权的点云投影函数，强化了墙壁表达
-def project_weighted(points,x_range,y_range,resolution):
+# 点云投影函数
+def project(points,x_range,y_range,resolution):
     # resolution是分辨率，单位是米/像素
     # 网格初始化
     x_min, x_max = x_range  # x_range和y_range是两个数组，解包出最大最小值
@@ -111,7 +112,7 @@ def project_weighted(points,x_range,y_range,resolution):
     y_in = y[in_range]
     col_idx = np.floor((x_in - x_min) / resolution).astype(int)
     row_idx = np.floor((y_max - y_in) / resolution).astype(int)  # matplotlib把第零行放在最上面，所以y轴需要翻转
-    np.add.at(grid, (row_idx, col_idx), 1)  # 累加每个格子的点数
+    grid[row_idx,col_idx] = 1  # 累加每个格子的点数
     # 计算网格边界物理坐标，方便后续画图
     x_edges = np.linspace(x_min, x_max, cols + 1)  # 生成的是一个数组，元素为分界线的坐标
     y_edges = np.linspace(y_min, y_max, rows + 1)
@@ -170,7 +171,7 @@ def hough_wall_detect(grid,x_edges,y_edges,min_length):
     return lines
 
 # 最后一个函数是把拟合出的线段参数转换成论文公式的形式,，加上了角度几何约束
-def parameterize_lines(lines,angle_tol_deg = 25):
+def parameterize_lines(lines,angle_tol_deg = 15):
     angle_tol = np.radians(angle_tol_deg)
     # 输出列表，每个元素是一个字典
     segments = []
@@ -204,6 +205,23 @@ def parameterize_lines_basic(lines):
             'length': length,
         })
     return segments
+
+# 一个延长短拟合直线的函数
+# def extrapolate_to_x_bounds(seg, x_min, x_max):
+#     cx, cy = seg['center_x'], seg['center_y']
+#     angle = seg['angle']
+#     if abs(np.cos(angle)) > 1e-6:
+#         dx_left = (x_min - cx) / np.cos(angle)
+#         dx_right = (x_max - cx) / np.cos(angle)
+#         x1, y1 = x_min, cy + dx_left * np.sin(angle)
+#         x2, y2 = x_max, cy + dx_right * np.sin(angle)
+#     else:
+#         x1, y1 = x_min, cy
+#         x2, y2 = x_max, cy
+#     new_length = np.sqrt((x2 - x1)**2 + (y2 - y1)**2)
+#     return {'center_x': (x1 + x2) / 2.0, 'center_y': (y1 + y2) / 2.0,
+#             'angle': angle, 'length': new_length}
+
 
 # 可视化，直接搬的llm的代码
 def draw_wall_2d(segments, merged, left_pts, right_pts, frame_idx, output_dir="wall_frames"):
@@ -369,33 +387,40 @@ def main():
 
             # 动态确定 y_range,根据y的均值
             y_vals = side_pts[:,1]
-            # y_lo = np.percentile(y_vals, 5)
-            # y_hi = np.percentile(y_vals, 95)
-            # y_range_side = (y_lo - 1.0, y_hi + 1.0)
-            y_mean = np.mean(y_vals)
-            y_std = np.std(y_vals)
-            y_range_side = (y_mean - 2*y_std, y_mean + 2*y_std)
+            y_lo = np.percentile(y_vals, 10)
+            y_hi = np.percentile(y_vals, 90)
+            y_range_side = (y_lo - 1.0, y_hi + 1.0)
+            # y_mean = np.mean(y_vals)
+            # y_std = np.std(y_vals)
+            # y_range_side = (y_mean - 2*y_std, y_mean + 2*y_std)
             # 投影到加权网格，准备Hough变换
-            grid, x_edges, y_edges = project_weighted(
+            grid, x_edges, y_edges = project(
                 side_pts,
-                x_range = (0,20),
+                x_range = (0,30),
                 y_range = y_range_side, # ！！！极其关键的一步！！！x和y的范围选取直接决定了投影矩阵的形状，也就决定了对哪个方向会更敏感
                 resolution = 0.3
             )
 
+            # grid_bin = grid > 0
+            # grid_bin = dilation(grid_bin, np.ones((3, 3)))
+            # grid_bin = dilation(grid_bin, np.ones((3, 3)))
+            # grid_bin = grid_bin.astype(np.uint8)
+
             # Hough变换
             raw_lines = hough_wall_detect(grid, x_edges, y_edges,
-                                          min_length = 8.0)
+                                          min_length = 3.92)
 
             # 角度优先，并且必须有回退防止没合适角度
             segs_angled = parameterize_lines(raw_lines)
             if segs_angled:
                 longest = max(segs_angled, key=lambda s: s['length'])
+                # longest = extrapolate_to_x_bounds(longest,0,50)
                 segments_this_frame.append(longest)
             else:
                 segs_basic = parameterize_lines_basic(raw_lines)
                 if segs_basic:
                     longest = max(segs_basic, key=lambda s: s['length'])
+                    # longest = extrapolate_to_x_bounds(longest, 0, 50)
                     segments_this_frame.append(longest)
 
         # 保存这一帧的结果
