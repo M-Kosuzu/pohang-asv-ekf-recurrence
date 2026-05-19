@@ -3,10 +3,7 @@
 使用三个lidar点云和calibration外参和内参数据，基于RANSAC拟合进行墙壁检测
 原文的Hough拟合实在是表现太差了
 """
-
-"""
-分为可供调用的单帧的检测函数，以及主函数main，用来调试
-"""
+from statistics import LinearRegression
 
 import numpy as np
 import os
@@ -237,43 +234,9 @@ def draw_wall_2d(segments, merged, left_pts, right_pts, frame_idx, output_dir="w
     plt.close(fig)   # 关闭图形，释放内存
 
 
-
-
-# 单帧检测函数
-def detect_walls_one_frame(front_pts_ahrs, port_pts_ahrs, starboard_pts_ahrs):
-    # 专门处理单帧的墙壁检测，用于调用
-
-    # 合并三个点云，就像论文里说的那样，这样hough只需要对一个对象进行了
-    merged = np.vstack([front_pts_ahrs, port_pts_ahrs, starboard_pts_ahrs])  # 垂直堆叠数组
-
-    # 滤波，也就是过滤掉一些阈值以外的点
-    merged = filter_by_height(merged, z_min=-1.0, z_max=5.0)
-    merged = filter_by_range(merged, min_x=7.0, max_x=50.0, min_y=-20.0, max_y=20.0)
-    # min_x设置成7.0，避免船头噪声干扰
-
-    # 左右分离，分别做hough变换
-    left_pts = merged[merged[:, 1] > 1.0]
-    right_pts = merged[merged[:, 1] < -1.0]
-    left_pts = extract_inner_surface(left_pts)
-    right_pts = extract_inner_surface(right_pts)
-
-    # 对这一帧的两侧点云分别进行墙壁拟合
-    segments_this_frame = []
-    for side_pts in [left_pts, right_pts]:
-        if len(side_pts) < 50:
-            continue
-        # RANSAC拟合
-        seg = ransac_wall_detect(side_pts, x_min=0, x_max=50)
-        if seg is not None:
-            segments_this_frame.append(seg)
-
-    return segments_this_frame
-
-
-
 """
 ********
-主函数框架，用来调试
+主函数框架
 ********
 """
 
@@ -329,7 +292,29 @@ def main():
         port_pts_ahrs = transform_points(port_pts, R_port, t_port)
         starboard_pts_ahrs = transform_points(starboard_pts, R_starboard, t_starboard)
 
-        segments_this_frame = detect_walls_one_frame(front_pts_ahrs, port_pts_ahrs, starboard_pts_ahrs)
+        # 合并三个点云，就像论文里说的那样，这样hough只需要对一个对象进行了
+        merged = np.vstack([front_pts_ahrs, port_pts_ahrs, starboard_pts_ahrs])  # 垂直堆叠数组
+
+        # 滤波，也就是过滤掉一些阈值以外的点
+        merged = filter_by_height(merged, z_min = -1.0, z_max = 5.0)
+        merged = filter_by_range(merged, min_x = 7.0, max_x = 50.0, min_y = -20.0, max_y = 20.0)
+        # min_x设置成7.0，避免船头噪声干扰
+
+        # 左右分离，分别做hough变换
+        left_pts = merged[merged[:,1] > 1.0]
+        right_pts = merged[merged[:,1] < -1.0]
+        left_pts = extract_inner_surface(left_pts)
+        right_pts = extract_inner_surface(right_pts)
+
+        # 当前帧的结果，准备导入all_segments，以及画图使用
+        segments_this_frame = []
+        for side_pts in [left_pts, right_pts]:
+            if len(side_pts) < 50:
+                continue
+            # RANSAC拟合
+            seg = ransac_wall_detect(side_pts, x_min=0, x_max=50)
+            if seg is not None:
+                segments_this_frame.append(seg)
 
         # 保存这一帧的结果
         for seg in segments_this_frame:
@@ -344,14 +329,6 @@ def main():
         # 每隔一百帧画一幅图
         if i % 100 == 0:
             print(f"[Frame {i:>5}] 检测到 {len(segments_this_frame)} 条墙")
-            # 为画图临时准备中间变量
-            merged = np.vstack([front_pts_ahrs, port_pts_ahrs, starboard_pts_ahrs])
-            merged = filter_by_height(merged, z_min=-1.0, z_max=5.0)
-            merged = filter_by_range(merged, min_x=7.0, max_x=50.0, min_y=-20.0, max_y=20.0)
-            left_pts = merged[merged[:, 1] > 1.0]
-            right_pts = merged[merged[:, 1] < -1.0]
-            left_pts = extract_inner_surface(left_pts)
-            right_pts = extract_inner_surface(right_pts)
             draw_wall_2d(segments_this_frame, merged, left_pts, right_pts, i)
 
     # 保存结果

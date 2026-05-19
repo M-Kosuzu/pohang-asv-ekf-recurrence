@@ -8,6 +8,8 @@ from scipy.spatial.transform import Rotation
 import utm
 import matplotlib.pyplot as plt
 import numdifftools as nd
+import matplotlib
+matplotlib.use('Agg')
 
 # 准备工作
 def load_gps(path):
@@ -48,7 +50,7 @@ def init_state(gps_row,ahrs_row):
     return x_state
 
 def init_cov():
-    """初始化“状态”协方差矩阵，因为状态是一个9个分量地向量，所以要返回一个9*9的矩阵"""
+    """初始化“状态”协方差矩阵，因为状态是一个9个分量的向量，所以要返回一个9*9的矩阵"""
     P = np.zeros((9,9))
 
     # 三个有关位置的方差
@@ -245,7 +247,7 @@ def main():
     # 全部结果保存
     columns = ['unix_time','x','y','z','roll','pitch','yaw','u','v','w']
     df_results = pd.DataFrame(results,columns=columns)
-    # df_results.to_csv(r"E:\PohangCanalDataset\navigation\results.csv",sep=',',index=False)
+    # df_results.to_csv(r"D:\Undergraduate\大一 下\拓展\project\ekf_results.csv",sep=',',index=False)
     print(rf"EKF完成，共{len(df_results)}帧，结果保存为E:\PohangCanalDataset\navigation\results.csv")
 
     # 检查P的对角线，检查是否饱和
@@ -297,7 +299,7 @@ def main():
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    plt.show()
+    plt.savefig("ekf_trajectory.png", dpi=200, bbox_inches='tight')
 
 if __name__ == '__main__':
     main()
